@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agora Web Demo</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 16px; }
+      #local-video, #remote-video { width: 48%; height: 360px; background: #111; display:inline-block; vertical-align:top; }
+    </style>
+  </head>
+  <body>
+    <h2>Agora Web Demo</h2>
+    <div>
+      <label>Channel: <input id="channel" value="demo-channel"></label>
+      <label>UID: <input id="uid" value="0"></label>
+      <button id="join">Join</button>
+      <button id="leave">Leave</button>
+    </div>
+    <div>
+      <div id="local-video"></div>
+      <div id="remote-video"></div>
+    </div>
+
+    <script>
+    // NOTE: Replace the CDN URL if needed to match the Agora Web SDK version.
+    (async ()=>{
+      const sdkUrl = 'https://download.agora.io/sdk/release/AgoraRTC_N-4.14.0.js'
+      await new Promise((res, rej) => {
+        const s = document.createElement('script'); s.src = sdkUrl; s.onload = res; s.onerror = rej; document.head.appendChild(s);
+      }).catch(()=> console.warn('Failed to load Agora SDK from CDN - ensure path is correct'))
+
+      const joinBtn = document.getElementById('join');
+      const leaveBtn = document.getElementById('leave');
+      const channelEl = document.getElementById('channel');
+      const uidEl = document.getElementById('uid');
+      const localContainer = document.getElementById('local-video');
+      const remoteContainer = document.getElementById('remote-video');
+
+      let client, localTracks = {}, remoteUsers = {};
+
+      joinBtn.onclick = async ()=>{
+        const channel = channelEl.value;
+        const uid = uidEl.value || '0';
+        // call local backend to get appId + token
+        const res = await fetch('/backend/token', { // in dev you may proxy or run backend at /backend
+          method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({channel, uid})
+        }).then(r=>r.json()).catch(e=>{console.error(e); return null});
+        if(!res) { alert('token endpoint failed'); return }
+
+        const appId = res.appId;
+        const token = res.token || null; // empty token allowed for App Certificate disabled projects
+
+        client = AgoraRTC.createClient({mode: 'rtc', codec: 'vp8'});
+
+        client.on('user-published', async (user, mediaType) => {
+          await client.subscribe(user, mediaType);
+          if (mediaType === 'video') {
+            const player = document.createElement('div'); player.id = 'player-' + user.uid; player.style.width='100%'; player.style.height='100%';
+            remoteContainer.appendChild(player);
+            user.videoTrack.play(player.id);
+          }
+          if (mediaType === 'audio') {
+            user.audioTrack.play();
+          }
+        });
+
+        await client.join(appId, channel, token, uid === '0' ? undefined : uid);
+        localTracks.audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+        localTracks.videoTrack = await AgoraRTC.createCameraVideoTrack();
+        localTracks.videoTrack.play(localContainer);
+        await client.publish(Object.values(localTracks));
+        console.log('published');
+      };
+
+      leaveBtn.onclick = async ()=>{
+        if(localTracks.audioTrack) await localTracks.audioTrack.close();
+        if(localTracks.videoTrack) await localTracks.videoTrack.close();
+        if(client) await client.leave();
+        localContainer.innerHTML = '';
+        remoteContainer.innerHTML = '';
+      }
+    })()
+    </script>
+  </body>
+</html>
